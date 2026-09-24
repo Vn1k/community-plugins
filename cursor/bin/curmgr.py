@@ -178,17 +178,21 @@ def find_theme(name: str) -> Path:
 # reading current state
 # --------------------------------------------------------------------------
 
-def _gsettings(key: str) -> str:
+def _gsettings(key: str) -> str | None:
+    """The key's value, or None when gsettings can't be read at all: not
+    installed, or installed without the org.gnome.desktop.interface schema."""
     if not shutil.which("gsettings"):
-        return ""
+        return None
     try:
-        out = subprocess.run(
+        proc = subprocess.run(
             ["gsettings", "get", "org.gnome.desktop.interface", key],
             capture_output=True, text=True, timeout=10,
-        ).stdout.strip()
+        )
     except (OSError, subprocess.SubprocessError):
-        return ""
-    return out.strip("'\"")
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip().strip("'\"")
 
 
 def _ini_value(path: Path, key: str) -> str:
@@ -208,8 +212,13 @@ def read_current() -> dict:
     states = {key: _read_compositor(spec) for key, spec in detected_compositors().items()}
     first = next(iter(states.values()), {})
     layers = {key: state["theme"] for key, state in states.items()}
+    # Without a working gsettings (no binary, or no schema) that layer can never
+    # be written, so it contributes no key - like an undetected compositor. A key
+    # holding "" would make `consistent` permanently false.
+    gsettings_theme = _gsettings("cursor-theme")
+    if gsettings_theme is not None:
+        layers["gsettings"] = gsettings_theme
     layers |= {
-        "gsettings": _gsettings("cursor-theme"),
         "gtk3": _ini_value(CONFIG / "gtk-3.0" / "settings.ini", "gtk-cursor-theme-name"),
         "gtk4": _ini_value(CONFIG / "gtk-4.0" / "settings.ini", "gtk-cursor-theme-name"),
         "xdg_default": _index_field(HOME / ".icons" / "default" / "index.theme", "Inherits"),
@@ -218,7 +227,7 @@ def read_current() -> dict:
     present = [v for v in layers.values() if v]
     return {
         "ok": True,
-        "theme": first.get("theme") or layers["gsettings"],
+        "theme": first.get("theme") or layers.get("gsettings") or layers["gtk3"],
         "size": first.get("size") or int(_gsettings("cursor-size") or 24),
         "hide_when_typing": bool(first.get("hide_when_typing")),
         "hide_after_inactive_ms": first.get("hide_after_inactive_ms", 0),
@@ -246,8 +255,24 @@ def _ms_to_s(ms: int) -> int:
     return -(-ms // 1000)
 
 
+# Theme names are directory names, and imported or installed ones often have
+# spaces ("DIM Violet") or even quotes. niri's KDL and sway's config both take a
+# double-quoted string with backslash escapes. Hyprland reads the raw rest of the
+# line but starts a comment at any `#`, so it writes `##` (its literal `#`);
+# Mango reads the raw rest of the line. Each row's `decode` undoes its encoding.
+def _quoted(value: str) -> str:
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _unquote(value: str) -> str:
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] == '"':
+        return re.sub(r"\\(.)", r"\1", value[1:-1])
+    return value
+
+
 def _render_niri(theme: str, size: int, hide_typing: bool, hide_ms: int, config_text: str) -> str:
-    lines = ["cursor {", f'    xcursor-theme "{theme}"', f"    xcursor-size {size}"]
+    lines = ["cursor {", f"    xcursor-theme {_quoted(theme)}", f"    xcursor-size {size}"]
     if hide_typing:
         lines.append("    hide-when-typing")
     if hide_ms > 0:
@@ -256,7 +281,7 @@ def _render_niri(theme: str, size: int, hide_typing: bool, hide_ms: int, config_
     # niri allows only one top-level `environment` node, so leave XCURSOR_* to
     # environment.d when the user already owns that block.
     if not re.search(r"^environment\s*\{", config_text, re.M):
-        lines += ["environment {", f'    XCURSOR_THEME "{theme}"',
+        lines += ["environment {", f"    XCURSOR_THEME {_quoted(theme)}",
                   f'    XCURSOR_SIZE "{size}"', "}"]
     return "\n".join(lines) + "\n"
 
@@ -268,7 +293,7 @@ def _render_hyprland(theme: str, size: int, hide_typing: bool, hide_ms: int, con
     # the parser is last-wins and an omitted key would leave an earlier one of
     # the user's standing when the panel turns the toggle off.
     return "\n".join([
-        f"env = XCURSOR_THEME,{theme}",
+        f"env = XCURSOR_THEME,{theme.replace('#', '##')}",
         f"env = XCURSOR_SIZE,{size}",
         "cursor {",
         f"    hide_on_key_press = {'true' if hide_typing else 'false'}",
@@ -283,7 +308,7 @@ def _render_sway(theme: str, size: int, hide_typing: bool, hide_ms: int, config_
     # between 1 and 99; 0 is the documented "never hide".
     idle = 0 if hide_ms <= 0 else max(100, hide_ms)
     return "\n".join([
-        f"seat * xcursor_theme {theme} {size}",
+        f"seat * xcursor_theme {_quoted(theme)} {size}",
         f"seat * hide_cursor when-typing {'enable' if hide_typing else 'disable'}",
         f"seat * hide_cursor {idle}",
     ]) + "\n"
@@ -314,7 +339,8 @@ COMPOSITORS = {
         "comment_block": "cursor",
         "validate": ["niri", "validate", "-c"],
         "reload": [],  # niri watches config.kdl; the mtime bump below is enough
-        "theme_re": r'xcursor-theme\s+"([^"]*)"',
+        "theme_re": r'xcursor-theme\s+("(?:[^"\\]|\\.)*")',
+        "decode": _unquote,
         "size_re": r"xcursor-size\s+(\d+)",
         "typing_re": r"hide-when-typing",
         "ms_re": r"hide-after-inactive-ms\s+(\d+)",
@@ -334,6 +360,7 @@ COMPOSITORS = {
         "validate": None,
         "reload": [["hyprctl", "reload"], ["hyprctl", "setcursor", "{theme}", "{size}"]],
         "theme_re": r"^env\s*=\s*XCURSOR_THEME,(.*)$",
+        "decode": lambda value: value.strip().replace("##", "#"),
         "size_re": r"^env\s*=\s*XCURSOR_SIZE,(\d+)$",
         "typing_re": r"hide_on_key_press\s*=\s*true",
         "ms_re": r"inactive_timeout\s*=\s*(\d+)",
@@ -347,8 +374,9 @@ COMPOSITORS = {
         "render": _render_sway,
         "validate": ["sway", "-C", "-c"],
         "reload": [["swaymsg", "reload"]],
-        "theme_re": r"^seat\s+\S+\s+xcursor_theme\s+(\S+)",
-        "size_re": r"^seat\s+\S+\s+xcursor_theme\s+\S+\s+(\d+)",
+        "theme_re": r'^seat\s+\S+\s+xcursor_theme\s+("(?:[^"\\]|\\.)*"|\S+)',
+        "decode": _unquote,
+        "size_re": r'^seat\s+\S+\s+xcursor_theme\s+(?:"(?:[^"\\]|\\.)*"|\S+)\s+(\d+)',
         "typing_re": r"hide_cursor\s+when-typing\s+enable",
         "ms_re": r"hide_cursor\s+(\d+)",
         "ms_scale": 1,
@@ -366,6 +394,7 @@ COMPOSITORS = {
         "validate": None,
         "reload": [["mmsg", "dispatch", "reload_config"]],
         "theme_re": r"^cursor_theme=(.*)$",
+        "decode": str.strip,
         "size_re": r"^cursor_size=(\d+)$",
         "typing_re": r"^cursor_hide_on_keypress=[1-9]",
         "ms_re": r"^cursor_hide_timeout=(\d+)$",
@@ -397,7 +426,7 @@ def _read_compositor(spec: dict) -> dict:
     size = re.search(spec["size_re"], text, re.M)
     ms = re.search(spec["ms_re"], text, re.M)
     return {
-        "theme": theme.group(1).strip() if theme else "",
+        "theme": spec["decode"](theme.group(1)) if theme else "",
         "size": int(size.group(1)) if size else 0,
         "hide_when_typing": bool(re.search(spec["typing_re"], text, re.M)),
         "hide_after_inactive_ms": int(ms.group(1)) * spec["ms_scale"] if ms else 0,
@@ -420,6 +449,9 @@ def _apply_compositor(name: str, spec: dict, theme: str, size: int,
         text = _comment_out_block(text, block, comment)
         notes.append(f"commented out the pre-existing top-level {block} block")
 
+    # Kept for the rollback: after the first apply the config already includes
+    # this file, so deleting it on a rejection would leave a dangling include.
+    previous = include_file.read_text() if include_file.is_file() else None
     include_file.write_text(f"{comment} {MANAGED_TEXT}\n"
                             + spec["render"](theme, size, hide_typing, hide_ms, text))
 
@@ -436,7 +468,10 @@ def _apply_compositor(name: str, spec: dict, theme: str, size: int,
     if not ok:
         if backup is not None:
             shutil.copy2(backup, config)
-        include_file.unlink(missing_ok=True)
+        if previous is None:
+            include_file.unlink(missing_ok=True)
+        else:
+            include_file.write_text(previous)
         return {"ok": False, "reason": f"{name} rejected the config, rolled back: {err}"}
 
     # niri watches config.kdl, so an edit to the included file alone would not
@@ -640,8 +675,9 @@ def write_theme(name: str, role_frames: dict, inherits: str = "Adwaita",
     )
     (staging / "cursor.theme").write_text(f"[Icon Theme]\nName={name}\nInherits={name}\n")
 
+    replaced = root.exists() or root.is_symlink()
     _swap_in(root, staging, retired)
-    return {"path": str(root), "cursors": written}
+    return {"path": str(root), "cursors": written, "replaced": replaced}
 
 
 # Both writers build a theme beside its final directory and swap it in only
@@ -757,6 +793,10 @@ def import_windows(source: Path, name: str, shadow_opts=None, sizes=NOMINAL_SIZE
             method = f"inf:{inf.name}"
             name = name or parsed.name
             break
+    # No name from the user or an .inf (heuristic packs, or an .inf without a
+    # name): the folder's, as build_from_pngs does, minus any leading dot so an
+    # extracted ".mypack" doesn't become a hidden theme.
+    name = name or root.name.lstrip(".")
 
     if not role_frames:
         # Packs ship near-duplicates - "Normal Select" beside "My Melody
@@ -867,6 +907,12 @@ def _theme_dir_name(root: Path) -> str:
 def _safe_theme_name(name: str) -> str:
     name = name.strip().strip("/")
     if not name or name in {".", ".."} or "/" in name or "\\" in name or ".." in name:
+        raise Fail(f"refusing an unsafe theme name: {name!r}")
+    # The name ends up inside compositor configs and environment.d. A newline
+    # would add a line of its own (`exec = ...` in Hyprland, which the reload
+    # right after runs), so anything non-printable is refused. A leading dot
+    # would make the theme hidden: list_themes() skips dot-entries.
+    if not name.isprintable() or name.startswith("."):
         raise Fail(f"refusing an unsafe theme name: {name!r}")
     return name
 
@@ -1128,18 +1174,26 @@ def _render_role_previews(role_frames: dict, dest_dir: Path, target: int = 32,
 
 
 def render_preview(theme: str, cell: int = 40, target: int = 32, force: bool = False) -> dict:
-    from wand.color import Color
-    from wand.image import Image
-    from win2xcur.parser import open_blob
-
     root = find_theme(theme)
     cursors = root / "cursors"
     PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
     out_path = PREVIEW_DIR / f"{theme}.png"
 
-    newest = max((p.stat().st_mtime for p in cursors.iterdir()), default=0)
-    if not force and out_path.is_file() and out_path.stat().st_mtime >= newest:
-        return {"ok": True, "preview": str(out_path), "cached": True}
+    # ctime, not mtime: install's copytree keeps the source mtimes, so a
+    # reinstall from older files looked unchanged. ctime can't be copied. lstat
+    # so a dangling alias symlink doesn't crash the whole strip. The directory's
+    # own ctime covers a cursor being added or removed.
+    newest = max([cursors.stat().st_ctime] + [p.lstat().st_ctime for p in cursors.iterdir()])
+    if not force and out_path.is_file():
+        cached = out_path.stat()
+        if cached.st_mtime >= newest:
+            return {"ok": True, "preview": str(out_path), "cached": True,
+                    "stamp": cached.st_mtime_ns}
+
+    # Imported only when a strip is actually drawn: the panel asks for one per
+    # theme on every open, and a cached answer shouldn't pay for ImageMagick.
+    from wand.color import Color
+    from wand.image import Image
 
     # ponytail: one process per theme, called serially from the panel. Fine for
     # the dozens of themes a person installs; batch it if that ever becomes hundreds.
@@ -1166,7 +1220,10 @@ def render_preview(theme: str, cell: int = 40, target: int = 32, force: bool = F
     canvas.format = "png"
     out_path.write_bytes(canvas.make_blob())
     canvas.close()
-    return {"ok": True, "preview": str(out_path), "cached": False, "slots": len(picks)}
+    return {"ok": True, "preview": str(out_path), "cached": False, "slots": len(picks),
+            # The panel keys the image on this, so a re-rendered strip at the
+            # same path isn't hidden behind the host's cached texture.
+            "stamp": out_path.stat().st_mtime_ns}
 
 
 # --------------------------------------------------------------------------
@@ -1294,7 +1351,9 @@ def main(argv=None) -> int:
                   sys.stdout)
         print()
         return 1
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - the one-JSON-object contract
+        # Anything unexpected still answers in JSON: the panel treats empty
+        # stdout as "engine missing" and would only show a traceback's first line.
         json.dump({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, sys.stdout)
         print()
         return 1
