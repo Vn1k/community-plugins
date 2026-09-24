@@ -16,12 +16,19 @@ local STRIP_HEIGHT = 56
 
 local tab = "themes"
 local themes = {}
-local previews = {} -- theme name -> rendered strip path
+local previews = {} -- theme name -> { path, stamp } of its rendered strip
 local selected = ""
 local sizeIndex = 2 -- 24
 local hideTyping = false
 local hideMs = ""
 local busy = false
+-- "import" or "build": a Browse pick waiting to be scanned once the theme list
+-- refresh lets go of `busy` (doImport/doBuild return early while it is set).
+local pendingScan = nil
+-- Bumped by every loadThemes(). A refresh started by an earlier open whose
+-- callbacks land late must not clear `busy`, run the queued scan or keep
+-- rendering previews over the newer one.
+local refreshGen = 0
 local status = ""
 local statusTone = "on_surface_variant"
 local current = nil
@@ -243,16 +250,19 @@ end
 
 -- Previews are rendered one at a time: each is a fresh process, and a theme
 -- with a hundred cursors is still under a second.
-local function loadPreviews(index)
+-- Previews are optional decoration and don't hold `busy`: the list is usable,
+-- and a queued Browse scan runs, as soon as `list` and `current` are in.
+local function loadPreviews(index, gen)
   local theme = themes[index]
-  if theme == nil then
-    busy = false
-    render()
+  if theme == nil or gen ~= refreshGen then
     return
   end
   call(`preview {shellQuote(theme.name)}`, function(result, err)
+    if gen ~= refreshGen then
+      return
+    end
     if result ~= nil then
-      previews[theme.name] = result.preview
+      previews[theme.name] = { path = result.preview, stamp = tostring(result.stamp or "") }
       render()
     elseif index == 1 then
       -- Previews are optional: without wand the panel still lists and applies
@@ -260,7 +270,7 @@ local function loadPreviews(index)
       -- the first theme reports; a missing dependency fails all of them.
       setStatus(err, "tertiary")
     end
-    loadPreviews(index + 1)
+    loadPreviews(index + 1, gen)
   end)
 end
 
@@ -283,6 +293,8 @@ local function loadCurrent(done)
 end
 
 loadThemes = function()
+  refreshGen += 1
+  local gen = refreshGen
   busy = true
   -- Panel state outlives a close, so a reopen would otherwise draw last
   -- session's drift warning until the refresh lands.
@@ -290,15 +302,30 @@ loadThemes = function()
   setStatus(tr("loading"))
   render()
   call("list", function(result, err)
+    if gen ~= refreshGen then
+      return
+    end
     if result == nil then
+      pendingScan = nil
       fail(err)
       return
     end
     themes = result.themes or {}
     setStatus("")
     loadCurrent(function()
+      if gen ~= refreshGen then
+        return
+      end
+      busy = false
       render()
-      loadPreviews(1)
+      local scan = pendingScan
+      pendingScan = nil
+      if scan == "import" then
+        onScanImport()
+      elseif scan == "build" then
+        onScanBuild()
+      end
+      loadPreviews(1, gen)
     end)
   end)
 end
@@ -322,8 +349,11 @@ local function themeTile(theme)
 
   local frame
   if preview ~= nil then
+    -- Keyed on the stamp: a re-rendered strip lands on the same path, and an
+    -- unchanged key would keep the host's cached texture (see serial).
     frame = ui.image({
-      width = width, height = STRIP_HEIGHT, path = preview, fit = "contain",
+      key = `strip_{theme.name}_{preview.stamp}`,
+      width = width, height = STRIP_HEIGHT, path = preview.path, fit = "contain",
       radius = 12, border = border, borderWidth = borderWidth, onClick = onClick,
     })
   else
@@ -795,28 +825,30 @@ end
 function onOpen(_context)
   -- The picker reopens this panel when it is done, so an open is also how a
   -- chosen path comes back.
+  -- Through the path-change handlers, so a new pick also drops the previous
+  -- pack's grid, report and hand-made mapping.
   consumePick("import", function(path)
-    importPath = path
+    onImportPathChange(path)
     tab = "import"
   end)
   consumePick("build", function(path)
-    buildPath = path
+    onBuildPathChange(path)
     tab = "build"
   end)
   consumePick("install", function(path)
     installPath = path
     tab = "install"
   end)
-  loadThemes()
   -- Picking a folder is the whole intent, so read it straight away: the user
   -- gets the mapping grid without a second click, and still decides when
-  -- anything is written. Only the tab the pick landed on scans - `busy` would
-  -- swallow the second call anyway, and a pick only ever sets one field.
+  -- anything is written. Only the tab the pick landed on scans, and only after
+  -- loadThemes() below is done with `busy`.
   if tab == "import" and trim(importPath) ~= "" and maps.import.scanned ~= trim(importPath) then
-    onScanImport()
+    pendingScan = "import"
   elseif tab == "build" and trim(buildPath) ~= "" and maps.build.scanned ~= trim(buildPath) then
-    onScanBuild()
+    pendingScan = "build"
   end
+  loadThemes()
 end
 
 function onPickImportDir()
@@ -974,8 +1006,10 @@ local function applyMapResult(st, source, result)
 
   if result.written then
     selected = result.name
-    setStatus(`{tr("built")}: {result.name}`, "primary")
-    noctalia.notify(tr("title"), `{tr("built")}: {result.name}`)
+    -- Same wording as install: overwriting a theme of that name shouldn't be silent.
+    local verb = result.replaced and tr("replaced") or tr("built")
+    setStatus(`{verb}: {result.name}`, "primary")
+    noctalia.notify(tr("title"), `{verb}: {result.name}`)
     call("list", function(listResult)
       if listResult ~= nil then
         themes = listResult.themes or {}
