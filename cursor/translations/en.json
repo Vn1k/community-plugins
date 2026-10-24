@@ -99,5 +99,53 @@
   "theme_name": "Theme name (optional)",
   "title": "Cursor",
   "unmapped": "Not recognised",
-  "unmapped_hint": "Assign them in the grid below, or rename the file after its role and convert again."
+  "unmapped_hint": "Assign them in the grid below, or rename the file after its role and convert again.",
+  "settings": {
+    "engine_path": {
+      "label": "Engine path",
+      "description": "Leave empty. Only for a checkout that keeps curmgr elsewhere."
+    },
+    "build_sizes": {
+      "label": "Built sizes",
+      "description": "Nominal sizes baked into themes you import or build.",
+      "option": {
+        "small": "Small (24, 32, 48)",
+        "standard": "Standard (24-96)",
+        "hidpi": "HiDPI (24-128)"
+      }
+    },
+    "scale_filter": {
+      "label": "Resampling",
+      "description": "How cursors are resized. Point keeps pixel art crisp; Lanczos suits smooth artwork.",
+      "option": {
+        "lanczos": "Lanczos (smooth)",
+        "point": "Point (pixel art)",
+        "mitchell": "Mitchell (balanced)"
+      }
+    },
+    "icon_dirs": {
+      "label": "Extra theme folders",
+      "description": "Also look for cursor themes here. ~/.local/share/icons, ~/.icons, $XCURSOR_PATH and $XDG_DATA_DIRS are always searched."
+    },
+    "install_dir": {
+      "label": "Install folder",
+      "description": "Where imported, built and installed themes go, and the only folder Remove deletes from. Must be inside your home folder, and somewhere your apps look for cursors. Leave empty for ~/.local/share/icons."
+    },
+    "niri_config": {
+      "label": "niri config",
+      "description": "Leave empty for ~/.config/niri/config.kdl. cursor.kdl is written beside it."
+    },
+    "hyprland_config": {
+      "label": "Hyprland config",
+      "description": "Leave empty for ~/.config/hypr/hyprland.conf. cursor.conf is written beside it."
+    },
+    "sway_config": {
+      "label": "Sway config",
+      "description": "Leave empty for ~/.config/sway/config. cursor.conf is written beside it."
+    },
+    "mango_config": {
+      "label": "MangoWC config",
+      "description": "Leave empty for ~/.config/mango/config.conf. cursor.conf is written beside it."
+    }
+  }
 }

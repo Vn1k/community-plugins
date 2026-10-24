@@ -80,7 +80,9 @@ centre in Settings), or with:
 noctalia msg panel-toggle vn1k/cursor:manager
 ```
 
-**Themes** lists every theme in `~/.local/share/icons`, `~/.icons` and `/usr/share/icons`,
+**Themes** lists every theme in `~/.local/share/icons`, `~/.icons`, `$XCURSOR_PATH` and
+`$XDG_DATA_DIRS/icons` (so NixOS and Guix profile themes show up), plus any extra folders
+you set,
 each with a rendered preview strip. Pick one, pick a size and press **Apply**. **Hide when
 typing** and **Hide after ms** set the compositor's cursor hiding. The bar at the top shows
 what each layer currently reports. When they disagree it says so, and applying again brings
@@ -124,6 +126,13 @@ Themes you installed, imported or built can be removed from the panel. The first
 | `engine_path` | `string` | empty | Leave empty. Points at a different `curmgr.py` than the bundled `bin/curmgr.py`, for a checkout that keeps the engine elsewhere. |
 | `build_sizes` | `select` | `24,32,48,64,96` | Nominal sizes baked into every theme the plugin imports or builds. Larger sets cost build time and disk; HiDPI screens want the bigger entries. |
 | `scale_filter` | `select` | `lanczos` | Resampling filter used when cursor art is scaled to those sizes. `point` keeps hard pixel edges crisp on 32×32 Windows art; `lanczos` suits anti-aliased modern packs; `mitchell` sits between them. |
+| `icon_dirs` | `string_list` | empty | Extra folders to search for cursor themes, on top of the ones above. |
+| `install_dir` | `folder` | `~/.local/share/icons` | Where imported, built and installed themes go, and the only folder **Remove** deletes from. Refused unless it is inside `$HOME`. Pick one your apps search for cursors. |
+| `niri_config`, `hyprland_config`, `sway_config`, `mango_config` | `file` | `~/.config/…` | The compositor's main config, if yours lives elsewhere. The managed `cursor.kdl` / `cursor.conf` is written next to it. |
+
+The path settings reach the engine as the env vars `CURMGR_ICON_DIRS` (`:`-joined),
+`CURMGR_INSTALL_DIR` and `CURMGR_{NIRI,HYPRLAND,SWAY,MANGO}_CONFIG`, so a keybind or script
+can set the same paths with the shell stopped.
 
 ## Notes
 
@@ -155,9 +164,9 @@ The compositor's main config (`config.kdl`, `hyprland.conf`, sway's `config`, ma
 Every later apply rewrites only the managed include file. Every compositor that has a config
 gets its file, not just the one running, so the theme stays right if you switch compositors.
 
-Imported and built themes go to `~/.local/share/icons/<name>`. Preview images are cached under
+Imported and built themes go to the install folder (`~/.local/share/icons/<name>` by default). Preview images are cached under
 `~/.cache/curmgr`. The browse buttons hand the chosen path back through the plugin's data
-directory. **Remove** only ever deletes under `~/.local/share/icons`, and refuses any path
+directory. **Remove** only ever deletes inside the install folder, and refuses any path
 outside it, so a theme in `/usr/share/icons` is never touched.
 
 **Processes.** The panel runs `python3 bin/curmgr.py`, `zenity` for the browse buttons, and
@@ -167,6 +176,9 @@ compositor tools named above.
 **Network.** None. Nothing is downloaded. Binary cursor formats are handled by
 [`win2xcur`](https://github.com/quantum5/win2xcur), and nothing here parses `.cur`, `.ani` or
 Xcursor by hand.
+
+A layer whose file is read-only (Home Manager's `gtk-3.0/settings.ini` on NixOS) reports
+its own error; the other layers are still applied.
 
 Already-running apps keep the cursor they read at startup. That is how Wayland works, not a
 bug. The `environment.d` and `~/.icons/default` layers exist so the next start picks up the
