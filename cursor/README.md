@@ -9,7 +9,7 @@ drift apart. It also turns Windows cursor packs or your own PNGs into Xcursor th
 | Field | Value |
 | --- | --- |
 | ID | `vn1k/cursor` |
-| Entries | Panel: `manager`; shortcut: `shortcut` |
+| Entries | Panel: `manager`; shortcut: `shortcut`; service: `lifecycle` |
 
 ## Requirements
 
@@ -119,13 +119,20 @@ into `~/.local/share/icons` byte for byte, with its alias symlinks intact.
 Themes you installed, imported or built can be removed from the panel. The first click on
 **Remove this theme** arms it and the second one removes it.
 
-**Undo**, at the bottom of the same tab, takes back everything the plugin changed. The include
-comes out of every compositor config, and the lines it had commented out are restored, so each
-config is back byte for byte. Its own files (the include files, `90-xcursor.conf`,
-`~/.icons/default/index.theme`) are deleted. GTK loses only its two cursor keys, gsettings is
-reset, and only the plugin's `XCURSOR_*` leave the Flatpak overrides. The cursor goes back to
-the system default; themes and config backups stay. It is armed by the first click, like
-Remove.
+**Reset to system cursor**, a small button at the bottom of the Themes tab, takes back
+everything the plugin changed. The include comes out of every compositor config, and the lines
+it had commented out are restored, so each config is back byte for byte. Its own files (the
+include files, `90-xcursor.conf`, `~/.icons/default/index.theme`) are deleted. GTK loses only
+its two cursor keys, gsettings is reset, and only the plugin's `XCURSOR_*` leave the Flatpak
+overrides. The cursor goes back to the system default; themes and config backups stay. The
+first click explains what will happen and offers Cancel; the second resets.
+
+**Removing the plugin** in Noctalia's settings does the same reset on its own. The `lifecycle`
+service keeps a copy of the engine in the plugin's data directory, because Noctalia deletes the
+plugin directory before `onExit("uninstall")` runs, and the hook runs that copy. A plugin that
+is removed while already disabled gets no hook, so press Reset first in that case. Apps started
+before a reset keep their cursor size until they restart, and anything started through the
+systemd user session keeps it until that session ends.
 
 ## Settings
 
@@ -191,7 +198,7 @@ compositor tools named above.
 Xcursor by hand.
 
 A layer whose file is read-only (Home Manager's `gtk-3.0/settings.ini` on NixOS) fails on its
-own and the other layers are still applied. The panel then says "Applied, except: gtk" and
+own and the other layers are still applied. The panel then says "Applied, but not to: GTK apps" and
 lists each failed layer with its reason. A layer the system simply lacks (no `flatpak`, no
 `gsettings`) is skipped, not reported.
 
