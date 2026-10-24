@@ -64,7 +64,7 @@ Reopen the panel afterwards.
 
 When they are present, the plugin also calls a few tools you already have: `gsettings` for the
 GNOME layer, `flatpak` for the Flatpak layer, plus the running compositor's own tools (`niri validate`, `sway -C` / `swaymsg`,
-`hyprctl`, `mmsg`) to check and reload a config change. A missing one is skipped and the
+`hyprctl`, `mmsg`, `umbriel config validate`) to check and reload a config change. A missing one is skipped and the
 panel says why. You do not install any of them for this plugin.
 
 Listing and applying themes works without the optional packages. Importing and building
@@ -128,10 +128,10 @@ Themes you installed, imported or built can be removed from the panel. The first
 | `scale_filter` | `select` | `lanczos` | Resampling filter used when cursor art is scaled to those sizes. `point` keeps hard pixel edges crisp on 32×32 Windows art; `lanczos` suits anti-aliased modern packs; `mitchell` sits between them. |
 | `icon_dirs` | `string_list` | empty | Extra folders to search for cursor themes, on top of the ones above. |
 | `install_dir` | `folder` | `~/.local/share/icons` | Where imported, built and installed themes go, and the only folder **Remove** deletes from. Refused unless it is inside `$HOME`. Pick one your apps search for cursors. |
-| `niri_config`, `hyprland_config`, `sway_config`, `mango_config` | `file` | `~/.config/…` | The compositor's main config, if yours lives elsewhere. The managed `cursor.kdl` / `cursor.conf` is written next to it. |
+| `niri_config`, `hyprland_config`, `sway_config`, `mango_config`, `umbriel_config` | `file` | `~/.config/…` | The compositor's main config, if yours lives elsewhere. The managed `cursor.kdl` / `cursor.conf` / `cursor.toml` is written next to it. |
 
 The path settings reach the engine as the env vars `CURMGR_ICON_DIRS` (`:`-joined),
-`CURMGR_INSTALL_DIR` and `CURMGR_{NIRI,HYPRLAND,SWAY,MANGO}_CONFIG`, so a keybind or script
+`CURMGR_INSTALL_DIR` and `CURMGR_{NIRI,HYPRLAND,SWAY,MANGO,UMBRIEL}_CONFIG`, so a keybind or script
 can set the same paths with the shell stopped.
 
 ## Notes
@@ -150,16 +150,21 @@ each compositor whose config file exists:
 | Hyprland | `~/.config/hypr/cursor.conf` | Hyprland, via `hyprctl reload` + `hyprctl setcursor` |
 | Sway | `~/.config/sway/cursor.conf` | Sway, via `swaymsg reload` |
 | MangoWC | `~/.config/mango/cursor.conf` | MangoWC, via `mmsg dispatch reload_config` |
+| Umbriel | `~/.config/umbriel/cursor.toml` | Umbriel, instantly (it watches its config) |
 
 The compositor's main config (`config.kdl`, `hyprland.conf`, sway's `config`, mango's
-`config.conf`) is the only file the plugin edits that it does not own. It is edited **once**:
+`config.conf`, umbriel's `config.toml`) is the only file the plugin edits that it does not own. It is edited **once**:
 
 - It is backed up to `<config>.bak-cursor-<timestamp>`.
 - One include line for the file above is appended.
-- niri only: a conflicting top-level `cursor` block is commented out. A second one would
-  collide in KDL, while the other three are last-wins parsers.
-- niri and Sway then validate the result (`niri validate`, `sway -C`), and a rejected config is
-  restored from the backup.
+- niri: a conflicting top-level `cursor` block is commented out. A second one would
+  collide in KDL, while Hyprland, Sway and MangoWC are last-wins parsers.
+- Umbriel applies its includes before `config.toml`, so its own `theme`, `size`,
+  `hide_when_typing` and `hide_timeout_ms` (and `XCURSOR_*` in `[environment]`) are commented
+  out; `hardware_cursor` and the rest stay. `cursor.toml` goes last in
+  `[include.optional] files`, next to Noctalia's own include, rather than in a second table.
+- niri, Sway and Umbriel then validate the result (`niri validate`, `sway -C`,
+  `umbriel config validate`), and a rejected config is restored from the backup.
 
 Every later apply rewrites only the managed include file. Every compositor that has a config
 gets its file, not just the one running, so the theme stays right if you switch compositors.
