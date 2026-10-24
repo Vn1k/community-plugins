@@ -119,6 +119,14 @@ into `~/.local/share/icons` byte for byte, with its alias symlinks intact.
 Themes you installed, imported or built can be removed from the panel. The first click on
 **Remove this theme** arms it and the second one removes it.
 
+**Undo**, at the bottom of the same tab, takes back everything the plugin changed. The include
+comes out of every compositor config, and the lines it had commented out are restored, so each
+config is back byte for byte. Its own files (the include files, `90-xcursor.conf`,
+`~/.icons/default/index.theme`) are deleted. GTK loses only its two cursor keys, gsettings is
+reset, and only the plugin's `XCURSOR_*` leave the Flatpak overrides. The cursor goes back to
+the system default; themes and config backups stay. It is armed by the first click, like
+Remove.
+
 ## Settings
 
 | Setting | Type | Default | Description |
@@ -127,7 +135,7 @@ Themes you installed, imported or built can be removed from the panel. The first
 | `build_sizes` | `select` | `24,32,48,64,96` | Nominal sizes baked into every theme the plugin imports or builds. Larger sets cost build time and disk; HiDPI screens want the bigger entries. |
 | `scale_filter` | `select` | `lanczos` | Resampling filter used when cursor art is scaled to those sizes. `point` keeps hard pixel edges crisp on 32×32 Windows art; `lanczos` suits anti-aliased modern packs; `mitchell` sits between them. |
 | `icon_dirs` | `string_list` | empty | Extra folders to search for cursor themes, on top of the ones above. |
-| `install_dir` | `folder` | `~/.local/share/icons` | Where imported, built and installed themes go, and the only folder **Remove** deletes from. Refused unless it is inside `$HOME`. Pick one your apps search for cursors. |
+| `install_dir` | `folder` | `~/.local/share/icons` | Where imported, built and installed themes go, and the only folder **Remove** deletes from. Refused unless it is inside `$HOME`. Anywhere but the default it is put on `XCURSOR_PATH` (via `environment.d`, so after the next login) and mounted read-only for Flatpak. |
 | `niri_config`, `hyprland_config`, `sway_config`, `mango_config`, `umbriel_config` | `file` | `~/.config/…` | The compositor's main config, if yours lives elsewhere. The managed `cursor.kdl` / `cursor.conf` / `cursor.toml` is written next to it. |
 
 The path settings reach the engine as the env vars `CURMGR_ICON_DIRS` (`:`-joined),
@@ -182,8 +190,10 @@ compositor tools named above.
 [`win2xcur`](https://github.com/quantum5/win2xcur), and nothing here parses `.cur`, `.ani` or
 Xcursor by hand.
 
-A layer whose file is read-only (Home Manager's `gtk-3.0/settings.ini` on NixOS) reports
-its own error; the other layers are still applied.
+A layer whose file is read-only (Home Manager's `gtk-3.0/settings.ini` on NixOS) fails on its
+own and the other layers are still applied. The panel then says "Applied, except: gtk" and
+lists each failed layer with its reason. A layer the system simply lacks (no `flatpak`, no
+`gsettings`) is skipped, not reported.
 
 Already-running apps keep the cursor they read at startup. That is how Wayland works, not a
 bug. The `environment.d` and `~/.icons/default` layers exist so the next start picks up the
