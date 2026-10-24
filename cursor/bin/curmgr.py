@@ -218,6 +218,8 @@ def read_current() -> dict:
     gsettings_theme = _gsettings("cursor-theme")
     if gsettings_theme is not None:
         layers["gsettings"] = gsettings_theme
+    if shutil.which("flatpak"):
+        layers["flatpak"] = _ini_value(DATA / "flatpak" / "overrides" / "global", "XCURSOR_THEME")
     layers |= {
         "gtk3": _ini_value(CONFIG / "gtk-3.0" / "settings.ini", "gtk-cursor-theme-name"),
         "gtk4": _ini_value(CONFIG / "gtk-4.0" / "settings.ini", "gtk-cursor-theme-name"),
@@ -324,7 +326,7 @@ def _render_mango(theme: str, size: int, hide_typing: bool, hide_ms: int, config
 
 
 # One entry per compositor whose own cursor has to be set separately from the
-# four portable layers. Adding a compositor is adding a row here, not a new
+# five portable layers. Adding a compositor is adding a row here, not a new
 # write path: `_apply_compositor` and `_read_compositor` are the only code.
 COMPOSITORS = {
     "niri": {
@@ -538,6 +540,22 @@ def _apply_gsettings(theme: str, size: int) -> dict:
     return {"ok": True}
 
 
+def _apply_flatpak(theme: str, size: int) -> dict:
+    # The sandbox mounts the host's icon dirs under /run/host and leaves
+    # XCURSOR_PATH empty, so without this every Flatpak app falls back to the
+    # runtime's Adwaita. One global user override; the CLI merges its keyfile.
+    if not shutil.which("flatpak"):
+        return {"ok": False, "reason": "flatpak not installed"}
+    xcursor_path = f"/run/host/user-share/icons:{HOME / '.icons'}:/run/host/share/icons"
+    proc = subprocess.run(["flatpak", "override", "--user", "--filesystem=~/.icons:ro",
+                           f"--env=XCURSOR_PATH={xcursor_path}",
+                           f"--env=XCURSOR_THEME={theme}", f"--env=XCURSOR_SIZE={size}"],
+                          capture_output=True, text=True, timeout=10)
+    if proc.returncode != 0:
+        return {"ok": False, "reason": proc.stderr.strip()}
+    return {"ok": True, "note": "applies to Flatpak apps started from now on"}
+
+
 def _apply_gtk(theme: str, size: int) -> dict:
     written = []
     for version in ("3.0", "4.0"):
@@ -575,8 +593,75 @@ def _apply_environment(theme: str, size: int) -> dict:
     return {"ok": True, "file": str(ENV_CONF), "note": "applies to processes started after next login"}
 
 
+# Every compositor asks the theme for one pixel size and takes the *nearest*
+# image, first one winning a tie. niri and Hyprland ask size * ceil(scale)
+# (src/cursor.rs, XCursorManager.cpp), wlroots - Sway and Mango - asks
+# int(size * scale) (wlr_xcursor_manager.c), GTK clients drawing their own
+# cursor ask size * ceil(scale). A theme shipping only 24/32/48/64/96 therefore
+# gives 28 the same image as 24 and 40 the same as 32 at scale 2.
+# ponytail: a fixed list of common scales, so an unusual one (1.6) still falls
+# to the nearest size; reading each output's real scale per COMPOSITORS row
+# would make it exact.
+COMMON_SCALES = (1, 1.25, 1.5, 1.75, 2, 3)
+
+
+def _target_sizes(size: int) -> set[int]:
+    import math
+    return ({size} | {int(size * s) for s in COMMON_SCALES}
+            | {size * math.ceil(s) for s in COMMON_SCALES})
+
+
+def ensure_sizes(root: Path, size: int) -> dict:
+    """Give every cursor in a user theme an image at each size a compositor may ask for.
+
+    System themes are left alone (they are not ours to rewrite), and a missing
+    ImageMagick only costs the exact sizes, never the apply itself.
+    """
+    target = _target_sizes(size)
+    try:
+        from win2xcur.parser import open_blob
+        from win2xcur.writer import to_x11
+    except ImportError as exc:
+        return {"added": [], "note": f"exact sizes need win2xcur and ImageMagick: {exc}"}
+
+    def missing_in(path: Path) -> set[int]:
+        try:
+            frames = open_blob(path.read_bytes()).frames
+        except (ValueError, OSError):
+            return set()
+        return target - {image.nominal for frame in frames for image in frame}
+
+    files = [f for f in sorted((root / "cursors").iterdir()) if f.is_file() and not f.is_symlink()]
+    missing = {f.name: m for f in files if (m := missing_in(f))}
+    if not missing:
+        return {"added": []}
+    if not _is_under(root, USER_ICONS):
+        return {"added": [], "note": "system theme: the nearest available size is used"}
+
+    dest, staging, retired = _stage(root.name)
+    # symlinks=True keeps the alias symlinks, exactly as install_theme() does.
+    shutil.copytree(root, staging, symlinks=True)
+    added: set[int] = set()
+    for name, lacking in missing.items():
+        path = staging / "cursors" / name
+        frames = open_blob(path.read_bytes()).frames
+        existing = {image.nominal for frame in frames for image in frame}
+        # The Xcursor parser hands wand premultiplied bytes and to_x11()
+        # premultiplies again, so straight alpha first or edges darken.
+        for frame in frames:
+            for image in frame:
+                # Keep the Image itself: a .sequence[0] of a temporary dies with it.
+                image.image = _unpremultiply(image.image)
+        frames = _expand_sizes(frames, sorted(existing | target))
+        path.write_bytes(to_x11(frames))
+        added |= lacking
+    _swap_in(dest, staging, retired)
+    return {"added": sorted(added)}
+
+
 def apply_theme(theme: str, size: int, hide_typing: bool, hide_ms: int) -> dict:
-    find_theme(theme)  # fail fast on a typo before touching any config
+    root = find_theme(theme)  # fail fast on a typo before touching any config
+    sizes = ensure_sizes(root, size)
     detected = detected_compositors()
     layers = {name: _apply_compositor(name, spec, theme, size, hide_typing, hide_ms)
               for name, spec in detected.items()}
@@ -585,13 +670,14 @@ def apply_theme(theme: str, size: int, hide_typing: bool, hide_ms: int) -> dict:
         "gtk": _apply_gtk(theme, size),
         "xdg_default": _apply_xdg_default(theme),
         "environment": _apply_environment(theme, size),
+        "flatpak": _apply_flatpak(theme, size),
     }
     # Under a supported compositor its own cursor is the one the user sees on
     # the desktop, so every detected one has to land. With none configured the
-    # four portable layers still change the cursor and decide on their own.
+    # five portable layers still change the cursor and decide on their own.
     ok = (all(layers[name]["ok"] for name in detected) if detected
           else any(layer["ok"] for layer in layers.values()))
-    return {"ok": ok, "theme": theme, "size": size, "layers": layers}
+    return {"ok": ok, "theme": theme, "size": size, "layers": layers, "sizes": sizes}
 
 
 # --------------------------------------------------------------------------

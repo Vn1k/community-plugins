@@ -63,7 +63,7 @@ python3 -c "import win2xcur, wand; print('ok')"
 Reopen the panel afterwards.
 
 When they are present, the plugin also calls a few tools you already have: `gsettings` for the
-GNOME layer, plus the running compositor's own tools (`niri validate`, `sway -C` / `swaymsg`,
+GNOME layer, `flatpak` for the Flatpak layer, plus the running compositor's own tools (`niri validate`, `sway -C` / `swaymsg`,
 `hyprctl`, `mmsg`) to check and reload a config change. A missing one is skipped and the
 panel says why. You do not install any of them for this plugin.
 
@@ -127,7 +127,7 @@ Themes you installed, imported or built can be removed from the panel. The first
 
 ## Notes
 
-**Files written.** Applying a theme writes the four portable layers below, plus one layer for
+**Files written.** Applying a theme writes the five portable layers below, plus one layer for
 each compositor whose config file exists:
 
 | Layer | File or command | Reaches |
@@ -136,6 +136,7 @@ each compositor whose config file exists:
 | GTK | `~/.config/gtk-3.0/settings.ini`, `~/.config/gtk-4.0/settings.ini` | GTK apps, on restart |
 | Legacy | `~/.icons/default/index.theme` (`Inherits=`) | Qt, SDL, Electron, XWayland, on restart |
 | Env | `~/.config/environment.d/90-xcursor.conf` | new processes, next login |
+| Flatpak | `flatpak override --user` (`XCURSOR_PATH`/`THEME`/`SIZE`, `~/.icons:ro`) | Flatpak apps, on restart |
 | niri | `~/.config/niri/cursor.kdl` | niri, instantly |
 | Hyprland | `~/.config/hypr/cursor.conf` | Hyprland, via `hyprctl reload` + `hyprctl setcursor` |
 | Sway | `~/.config/sway/cursor.conf` | Sway, via `swaymsg reload` |
@@ -160,7 +161,7 @@ directory. **Remove** only ever deletes under `~/.local/share/icons`, and refuse
 outside it, so a theme in `/usr/share/icons` is never touched.
 
 **Processes.** The panel runs `python3 bin/curmgr.py`, `zenity` for the browse buttons, and
-`noctalia msg panel-open` to reopen itself after a browse. The engine runs `gsettings` and the
+`noctalia msg panel-open` to reopen itself after a browse. The engine runs `gsettings`, `flatpak` and the
 compositor tools named above.
 
 **Network.** None. Nothing is downloaded. Binary cursor formats are handled by
