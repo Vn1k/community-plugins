@@ -9,7 +9,7 @@ drift apart. It also turns Windows cursor packs or your own PNGs into Xcursor th
 | Field | Value |
 | --- | --- |
 | ID | `vn1k/cursor` |
-| Entries | Panel: `manager`; shortcut: `shortcut`; service: `lifecycle` |
+| Entries | Panel: `manager`; shortcut: `shortcut`; bar widget: `widget`; service: `lifecycle` |
 
 ## Requirements
 
@@ -74,7 +74,8 @@ you to type the path instead.
 ## Usage
 
 Open the panel from the control centre tile (the `shortcut` entry, added under the control
-centre in Settings), or with:
+centre in Settings), from the optional bar button (add the **Cursor** widget from the bar's
+widget picker; the panel opens right under it), or with:
 
 ```sh
 noctalia msg panel-toggle vn1k/cursor:manager
