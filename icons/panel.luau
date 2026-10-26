@@ -308,7 +308,7 @@ local function themeRow(theme, isChild, children)
   -- leaves out, so a row that stopped being selected kept its fill.
   return ui.row({
     key = `theme_{theme.name}_{isSelected and "on" or "off"}`, gap = 4, align = "center",
-    paddingH = 6, paddingV = 6, radius = 8, fill = isSelected and "surface_variant" or nil,
+    paddingH = 6, paddingV = 6, radius = 8, fill = isSelected and "surface_container" or nil,
     onClick = function() selectTheme(theme.name) end,
   }, {
     lead,
@@ -360,7 +360,7 @@ local function iconCell(icon)
                       height = ICON, fit = "contain", tooltip = icon.name })
   end
   -- A gap, not a stand-in: the theme really does not have this icon.
-  return ui.box({ width = ICON, height = ICON, radius = 8, border = "outline", borderWidth = 1,
+  return ui.box({ width = ICON, height = ICON, radius = 8, border = "outline_variant", borderWidth = 1,
                   tooltip = `{icon.name}: {tr("missing_icon")}` })
 end
 
@@ -380,7 +380,7 @@ local function specimenSheet()
     table.insert(rows, ui.row({ key = `group_{name}`, gap = 18, align = "center",
                                 minHeight = ICON }, cells))
   end
-  return ui.column({ gap = 14, padding = 18, radius = 12, fill = "surface_variant",
+  return ui.column({ gap = 14, padding = 18, radius = 12, fill = "surface_container",
                      align = "stretch" }, rows)
 end
 
@@ -400,7 +400,7 @@ local function folderColors()
       key = `swatch_{selected}_{c.name}_{state}`, path = c.path, width = SWATCH, height = SWATCH,
       fit = "contain", radius = 6,
       tooltip = state == "applied" and `{c.name} ({tr("applied_now")})` or c.name,
-      border = state == "picked" and "primary" or (state == "applied" and "outline" or nil),
+      border = state == "picked" and "primary" or (state == "applied" and "outline_variant" or nil),
       borderWidth = state == "plain" and 0 or (state == "picked" and 2 or 1),
       onClick = function() onFolderColor(c.name) end,
     }))
@@ -577,7 +577,7 @@ local function previewFor(item)
     return ui.image({ key = `preview_{item.id}`, path = path, width = 128, height = 90,
                       fit = "cover", radius = 8 })
   end
-  return ui.box({ width = 128, height = 90, radius = 8, fill = "surface_variant" })
+  return ui.box({ width = 128, height = 90, radius = 8, fill = "surface_container" })
 end
 
 local function loadPreview(item)
@@ -640,7 +640,7 @@ local function resultRow(item)
   end
   return ui.column({ key = `item_{item.id}_{open and "open" or "shut"}`, gap = 10, padding = 8,
                      radius = 10,
-                     fill = open and "surface_variant" or nil, align = "stretch" }, children)
+                     fill = open and "surface_container" or nil, align = "stretch" }, children)
 end
 
 local function progressLine()
